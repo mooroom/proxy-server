@@ -1,10 +1,12 @@
-import os, sys, threading, socket
+import os, sys, threading, socket, signal
 
 MAX_DATA_RECV = 999999
 DEBUG = True
 BLOCKED = ["yonsei"]
+clients = []
 
 def main():
+
     if(len(sys.argv) < 2):
         print("No port given, using: 8080")
         port = 8080
@@ -14,20 +16,23 @@ def main():
     host = 'localhost'
     print("Proxy Server Running on {} : {}".format(host, port))
 
-    # try:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind((host, port))
-    s.listen(50)
+    s.listen(10)
 
-    # except socket.error:
-    #     if s:
-    #         s.close()
 
-    #     print("Could not open socket: ")
-    #     sys.exit(1)
+    while True:
+        try:
+            conn, client_addr = s.accept()
 
-    while 1:
-        conn, client_addr = s.accept()
+        except KeyboardInterrupt:
+            for client in clients:
+                client.close()
+            print('\nexit')
+            break
+        
+        clients.append(conn)
         t = threading.Thread(target=proxy_thread, args=(conn, client_addr))
         t.setDaemon(True)
         t.start()
@@ -35,6 +40,7 @@ def main():
     s.close()
 
 def printout(type, request, address):
+    colornum = 0
     if("Block" in type or "Blacklist" in type):
         colornum = 91
     elif("Request" in type):
@@ -42,17 +48,19 @@ def printout(type, request, address):
     elif("Reset" in type):
         colornum = 93
 
-    print("\033[" + colornum + "m" + address[0] + "\t" + type + "\t" + request + "\033[0m")
+    print("\033[ {} m {} \t {} \t {} \033[0m".format(colornum, address[0], type, request))
 
 def proxy_thread(conn, client_addr):
     request = conn.recv(MAX_DATA_RECV)
-    print("'''''''''''''")
-    print("connection:")
+
+    print("CONNECTION: ")
     print(conn)
-    print("'''''''''''''")
-    print("request")
-    print(request)
-    print("'''''''''''''")
+    print("-------------------")
+    print("REQUEST: ")
+    reqsplited = request.split()
+    for i in reqsplited:
+        print(i.decode('utf-8'))
+    print("-------------------")
 
     first_line = request.decode().split('\n')[0]
 
@@ -85,24 +93,34 @@ def proxy_thread(conn, client_addr):
         port = int((temp[(port_pos+1):])[:webserver_pos-port_pos-1])
         webserver = temp[:port_pos] 
 
-    print("'''''''''''''")
+    print("WEBSERVER:")
     print(webserver)
-    print("'''''''''''''")
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    print("-------------------")
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)        
     s.connect((webserver, port))
     s.sendall(request)
 
     while 1:
         data = s.recv(MAX_DATA_RECV)
-        print("DATA: " + data.decode())
+        print("DATA:")
+        # decoded = data.decode()
+        splited = data.split()
+        for i in splited:
+            print(i.decode('utf-16'))
+        print("-------------------")
 
         if(len(data) > 0) :
             conn.send(data)
-        else:
+        elif socket.error or KeyboardInterrupt:
             break
 
-    s.close()
     conn.close()
+    s.close()
+    
+    print("---------Exit---------")
+    sys.exit(1)
+
 
 if __name__ == '__main__':
     main()
