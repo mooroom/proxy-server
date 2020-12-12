@@ -1,103 +1,46 @@
-import os, sys, threading, socket, signal
+from socket import *
+import threading
+import sys
 
-MAX_DATA_RECV = 999999
-DEBUG = True
-clients= []
-no = 1
-thread_num = 0
+host = 'localhost'
+port = int(sys.argv[1])
+img_filter = 'X'
 url_filter = 'X'
-image_filter = 'X'
+no = 0
+conn_no = 0
+clients = []
 
-def main():
+print('Starting proxy server on port {}'.format(port))
 
-    if(len(sys.argv) < 2):
-        print('Please enter port number.')
-        sys.exit(1)
-    else:
-        port = int(sys.argv[1])
-        print('Starting proxy server on port {}'.format(port))
+s_proxy_socket = socket(AF_INET, SOCK_STREAM)
+s_proxy_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+s_proxy_socket.bind((host, port))
+s_proxy_socket.listen(20)
 
-    host = 'localhost'
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((host, port))
-    s.listen(20)
-
-
-    while True:
-        try:
-            conn, client_addr = s.accept()
-
-        except KeyboardInterrupt:
-            break
-
-        clients.append(conn)
-        t = threading.Thread(target=proxy_thread, args=(conn, client_addr))
-        t.setDaemon(True)
-        t.start()
-
-    print('\n=======================')
-    print('Proxy server terminated.')
-    s.close()
-    sys.exit(1)
-
-def proxy_thread(conn, client_addr):
-    request = conn.recv(MAX_DATA_RECV)
-
-    global thread_num
-    global no
-
-    global image_filter
-    global url_filter
-
-    thread_num += 1
-
-    # print("-------------------")
-    # print("REQUEST: ")
-    # print(request)
-    # print("-------------------")
-
-    first_line = request.decode().split('\r\n')[0]
-
+def destination_info(first_line):
+    url = ''
     try:
-        url = first_line.split('GET ')[1]
+        url = first_line.split()[1]
     except:
-        print('URL not found')
-        sys.exit(1)
-
-    #######################
-    #url filter
-    if 'yonsei' in url:
-        url_filter = 'O'
-    else:
-        url_filter = 'X'
-
-    #image filter
-    if '?image_off' in url:
-        image_filter = 'O'
-        url.split('?image_off')[0]
-    elif 'image_on' in url:
-        image_filter = 'X'
-        url.split('?image_on')[0]
-    else:
-        image_filter = 'O'
-    #######################
+        print('URL not found.')
+        pass
 
     http_pos = url.find("://")
+
     if(http_pos == -1):
         temp = url
     else:
         temp = url[(http_pos + 3):]
 
     port_pos = temp.find(":")
-
     webserver_pos = temp.find("/")
+
     if(webserver_pos == -1):
         webserver_pos = len(temp)
 
     webserver = ""
     port = -1
+
     if(port_pos == -1 or webserver_pos < port_pos):
         port = 80
         webserver = temp[:webserver_pos]
@@ -105,17 +48,36 @@ def proxy_thread(conn, client_addr):
         port = int((temp[(port_pos+1):])[:webserver_pos-port_pos-1])
         webserver = temp[:port_pos] 
 
-    # print("WEBSERVER:")
-    # print(webserver)
-    # print("-------------------")
+    return (url, webserver, port)
 
-    print('-----------------------------------------------')
-    print('{}  [Conn:    {}/  {}]'.format(no, thread_num, len(clients)))
-    print('[ {} ] URL filter | [ {} ] Image filter\n'.format(url_filter, image_filter))
-    print('[CLI connected to {}:{}]'.format(client_addr[0], client_addr[1]))
-    print('[CLI ==> PRX --- SRV]')
+def proxy_thread(conn, conn_no, addr):
+    global img_filter
+    global url_filter
+    global no
 
-    no += 1
+    request = conn.recv(1024)
+
+    first_line = request.decode().split('\r\n')[0]
+    (url, webserver, port) = destination_info(first_line)
+
+    if '?image_off' in url:
+        img_filter = 'O'
+    elif '?image_on' in url:
+        img_filter = 'X'
+
+    if 'yonsei' in url:
+        req_decoded_split = request.decode().split('\r\n')
+        newGET = 'GET http://www.linuxhowtos.org/ HTTP/1.1'
+        newHOST = 'Host: www.linuxhowtos.org'
+        req_decoded_split[0] = newGET
+        req_decoded_split[1] = newHOST
+        new_req = '\r\n'.join(req_decoded_split).encode()
+        request = new_req
+        first_line = request.decode().split('\r\n')[0]
+        (url, webserver, port) = destination_info(first_line)
+        url_filter = 'O'
+    else:
+        url_filter = 'X'
 
     #get request message
     req_messages = request.decode().split('\r\n')
@@ -127,47 +89,37 @@ def proxy_thread(conn, client_addr):
             user_agent_message = i.split('User-Agent: ')[1]
     ####################
 
-    print('\t> {}'.format(get_message))
-    print('\t> {}'.format(user_agent_message))
+    no += 1
 
+    print('-----------------------------------------------')
+    print('{}  [Conn:    {}/  {}]'.format(no, conn_no, len(clients)))
+    print('[ {} ] URL filter | [ {} ] Image filter\n'.format(url_filter, img_filter))
+    print('[CLI connected to {}:{}]'.format(addr[0], addr[1]))
+    print('[CLI ==> PRX --- SRV]')
+    print('  > {}'.format(get_message))
+    print('  > {}'.format(user_agent_message))
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+    c_proxy_socket = socket(AF_INET, SOCK_STREAM)
 
-    if url_filter == 'O':
-        webserver = 'www.linuxhowtos.org'
-
-    s.connect((webserver, port))
+    c_proxy_socket.connect((webserver, port))
     print('[SRV connected to {}:{}]'.format(webserver, port))
 
-    s.sendall(request)
+    c_proxy_socket.sendall(request)
     print('[CLI --- PRX ==> SRV]')
-    print('\t> {}'.format(get_message))
-    print('\t> {}'.format(user_agent_message))
+    print('  > {}'.format(get_message))
+    print('  > {}'.format(user_agent_message))
 
-    while 1:
-        data = s.recv(MAX_DATA_RECV)
-        # print("DATA:")
-        
-        img_flag = False
-        splited = data.split(b'\r\n\r\n')
-        header = splited[0]
-        # print('===header=====')
-        # print(header)
-        # print('==========')
-
+    while True:
+        data = c_proxy_socket.recv(4096)
+        header = ''
         res_status = ''
         res_type = ''
         res_size = ''
-
         header_exits = False
-
+        
         try:
-            decoded_header = header.decode()
-            if image_filter == 'O':
-                if 'image/' in decoded_header:
-                    img_flag = True
-
-            splited_header = decoded_header.split('\r\n')
+            header = data.split(b'\r\n\r\n')[0].decode()
+            splited_header = header.split('\r\n')
             res_status = splited_header[0].split('HTTP/1.1 ')[1]
 
             for i in splited_header:
@@ -177,33 +129,55 @@ def proxy_thread(conn, client_addr):
                     res_size = i.split('Content-Length: ')[1]
 
             print('[CLI --- PRX <== SRV]')
-            print('\t> {}'.format(res_status)) 
-            print('\t> {} {}bytes'.format(res_type, res_size))
+            print('  > {}'.format(res_status)) 
+            print('  > {} {}bytes'.format(res_type, res_size))
 
             header_exits = True
         except:
-            pass 
+            pass
 
-        
+        if img_filter == 'O':
+            if 'image/' in header:
+                break
 
-        if(len(data) > 0 and img_flag == False) :
+        if len(data) > 0:
+            conn.send(data)
             if header_exits:
                 print('[CLI <== PRX --- SRV]')
-                print('\t> {}'.format(res_status)) 
-                print('\t> {} {}bytes'.format(res_type, res_size)) 
-            conn.send(data)
+                print('  > {}'.format(res_status)) 
+                print('  > {} {}bytes'.format(res_type, res_size)) 
         else:
             break
 
+    cli_copy = clients
+    for i in cli_copy:
+        if conn in i:
+            clients.remove(i)
+            
     conn.close()
-    clients.remove(conn)
     print('[CLI disconnected]')
 
-    s.close()
+    c_proxy_socket.close()
     print('[SRV disconnected]')
 
+#############################
+#main loop
+while True:
+    try:
+        conn, addr = s_proxy_socket.accept()
+    except KeyboardInterrupt:
+        for client in clients:
+            client[0].close()
+        s_proxy_socket.close()
+        print('\nTerminate Proxy Sever.')
+        break
 
-if __name__ == '__main__':
-    main()
- 
+    conn_no += 1
+    conn_info = (conn, conn_no)
+    clients.append(conn_info)
+
+    t = threading.Thread(target=proxy_thread, args=(conn, conn_no, addr))
+    t.daemon = True
+    t.start()
+
 
